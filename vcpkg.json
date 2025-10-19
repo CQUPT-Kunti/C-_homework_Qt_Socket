@@ -1,0 +1,7 @@
+{
+  "name": "homework",
+  "version": "1.0",
+  "dependencies": [
+    "libevent"
+  ]
+}
