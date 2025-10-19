@@ -145,7 +145,6 @@ namespace Net
         {
             return false;
         }
-
         bufferevent_write(it->second, data, len);
         return true;
     }

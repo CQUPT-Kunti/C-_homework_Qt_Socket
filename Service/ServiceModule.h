@@ -27,6 +27,8 @@ namespace Service
         explicit ServiceModule(Net::NetworkModule *net);
         ~ServiceModule();
 
+        void start();
+
         /**
          * @brief 处理来自客户端的数据
          *
@@ -43,7 +45,7 @@ namespace Service
          * @param client_fd 客户端 socket fd
          * @param message 待发送内容
          */
-        void sendMessage(int client_fd, const std::string &message);
+        void sendMessage(int client_fd, const char *data, size_t len);
     };
 
 } // namespace Service
