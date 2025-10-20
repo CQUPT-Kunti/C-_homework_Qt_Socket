@@ -15,12 +15,14 @@ add_executable(Socket
     main.cpp
     Network/NetworkModule.cpp
     Service/ServiceModule.cpp
+    Protocol/ProtocolModule.cpp
 )
 
 # 头文件搜索路径
 target_include_directories(Socket PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Network
     ${CMAKE_CURRENT_SOURCE_DIR}/Service
+    ${CMAKE_CURRENT_SOURCE_DIR}/Protocol
 )
 
 # 链接 libevent 库
