@@ -7,6 +7,8 @@
 #include <sys/socket.h>
 
 #include "NetworkModule.h"
+#include "MultiUserReassembler.h"
+#include "ProtocolModule.h"
 
 namespace Service
 {
@@ -22,6 +24,7 @@ namespace Service
     {
     private:
         Net::NetworkModule *network_;
+        Protocol::MultiUserReassembler reassembler_;
 
     public:
         explicit ServiceModule(Net::NetworkModule *net);
@@ -43,9 +46,25 @@ namespace Service
          *
          * 需要依赖网络模块提供 sendData 接口
          * @param client_fd 客户端 socket fd
-         * @param message 待发送内容
+         * @param userId  用户id
+         * @param type   传输类型
+         * @param data   传输数据
+         * @param len    消息长度
+         *
          */
-        void sendMessage(int client_fd, const char *data, size_t len);
+        void sendMessage(int client_fd, uint32_t userId,
+                         Protocol::MsgType type, const char *data, size_t len);
+
+        /**
+         * @brief 发送响应消息
+         *
+         * 需要依赖网络模块提供 sendData 接口
+         * @param client_fd 客户端 socket fd
+         * @param userId  用户id
+         * @param string  发送数据
+         *
+         */
+        void sendResponse(int client_fd, uint32_t userId, const std::string &text);
     };
 
 } // namespace Service

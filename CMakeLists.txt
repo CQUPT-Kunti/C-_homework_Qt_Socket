@@ -16,6 +16,9 @@ add_executable(Socket
     Network/NetworkModule.cpp
     Service/ServiceModule.cpp
     Protocol/ProtocolModule.cpp
+    Protocol/Reassembler.cpp
+    Protocol/MultiUserReassembler.cpp
+    
 )
 
 # 头文件搜索路径

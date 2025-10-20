@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <cstring>
+#include <chrono>
 
 namespace Service
 {
@@ -16,32 +17,61 @@ namespace Service
     // handle message
     void ServiceModule::onMessage(int client_fd, const char *data, size_t len)
     {
-        std::string msg(data, len);
-        std::cout << "[Service] Received from fd " << client_fd << ": " << msg << std::endl;
+        if (len < sizeof(Protocol::ProtocolHeader))
+            return;
+        Protocol::ProtocolHeader header{};
+        std::memcpy(&header, data, sizeof(Protocol::ProtocolHeader));
+
+        const char *payload = data + sizeof(Protocol::ProtocolHeader);
+        size_t payloadLen = len - sizeof(Protocol::ProtocolHeader);
+
+        std::vector<char> fullData;
+        bool complete = reassembler_.append(header, payload, fullData);
+        if (complete)
+        {
+            std::cout << "[Service] Received complete msg from user "
+                      << header.userId << ", type=" << header.type
+                      << ", len=" << fullData.size() << std::endl;
+            if (header.type == Protocol::TEXT)
+            {
+                std::string text(fullData.begin(), fullData.end());
+                std::string response = "Server received your message: " + text;
+                std::cout << "Text: " << text << std::endl;
+                sendResponse(client_fd, header.userId, response);
+            }
+            else if (header.type == Protocol::IMAGE)
+            {
+                std::cout << "[IMAGE] Received image of size " << fullData.size() << " bytes" << std::endl;
+                std::string response = "Server received your image (" + std::to_string(fullData.size()) + " bytes)";
+
+                sendResponse(client_fd, header.userId, response);
+            }
+        }
     }
 
-    void ServiceModule::sendMessage(int client_fd, const char *data, size_t len)
+    void ServiceModule::sendResponse(int client_fd, uint32_t userId, const std::string &text)
     {
-        // 使用 std::string 管理内存
-        std::string msg(data, len);
-        std::reverse(msg.begin(), msg.end());
+        sendMessage(client_fd, userId, Protocol::TEXT, text.data(), text.size());
+    }
 
-        if (network_ && network_->sendData(client_fd, msg.data(), msg.size()))
+    void ServiceModule::sendMessage(int client_fd, uint32_t userId,
+                                    Protocol::MsgType type, const char *data, size_t len)
+    {
+        Protocol::ProtocolHeader header{};
+        // 时间戳 生成msgId
+        uint64_t msgId = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+        auto chunks = Protocol::ProtocolMessage::splitMessage(userId, msgId, type, data, len);
+        for (auto &msg : chunks)
         {
-            std::cout << "[SUCCESS] Sent: " << msg << std::endl;
-        }
-        else
-        {
-            std::cout << "[FAILED] Send" << std::endl;
+            auto buf = Protocol::ProtocolMessage::serializeMessage(msg);
+            network_->sendData(client_fd, buf.data(), buf.size());
         }
     }
 
     void ServiceModule::start()
     {
         network_->init(8081, [&](int fd, const char *data, size_t len)
-                       { 
-                        onMessage(fd, data, len); 
-                        sendMessage(fd,data,len); });
+                       { onMessage(fd, data, len); });
     }
 
 }

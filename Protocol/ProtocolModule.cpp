@@ -3,7 +3,7 @@
 
 namespace Protocol
 {
-    std::vector<Message> splitMessage(uint32_t userId, uint64_t msgId, MsgType type, const char *data, size_t len)
+    std::vector<Message> ProtocolMessage::splitMessage(uint32_t userId, uint64_t msgId, MsgType type, const char *data, size_t len)
     {
         std::vector<Message> chunks;
         size_t total_seq = (len + MAX_CHUNK_SIZE - 1) / MAX_CHUNK_SIZE;
@@ -24,12 +24,13 @@ namespace Protocol
             msg.header.payloadLen = static_cast<uint32_t>(chunkLen);
 
             msg.payload.resize(chunkLen);
-            std::memcmp(msg.payload.data(), data + offset, chunkLen);
+            std::memcpy(msg.payload.data(), data + offset, chunkLen);
             chunks.push_back(std::move(msg));
         }
+        return chunks;
     }
 
-    std::vector<char> serializeMessage(const Message &msg)
+    std::vector<char> ProtocolMessage::serializeMessage(const Message &msg)
     {
         std::vector<char> buf(sizeof(ProtocolHeader) + msg.payload.size());
         std::memcpy(buf.data(), &msg.header, sizeof(ProtocolHeader));
