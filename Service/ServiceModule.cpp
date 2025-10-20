@@ -35,16 +35,12 @@ namespace Service
             if (header.type == Protocol::TEXT)
             {
                 std::string text(fullData.begin(), fullData.end());
-                std::string response = "Server received your message: " + text;
-                std::cout << "Text: " << text << std::endl;
-                sendResponse(client_fd, header.userId, response);
+                sendResponse(client_fd, header.userId, text);
             }
             else if (header.type == Protocol::IMAGE)
             {
-                std::cout << "[IMAGE] Received image of size " << fullData.size() << " bytes" << std::endl;
-                std::string response = "Server received your image (" + std::to_string(fullData.size()) + " bytes)";
-
-                sendResponse(client_fd, header.userId, response);
+                std::string text(fullData.begin(), fullData.end());
+                sendResponse(client_fd, header.userId, text);
             }
         }
     }
