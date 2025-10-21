@@ -1,43 +1,62 @@
 #include "NetworkModule.h"
+#include "ProtocolModule.h"
 
 #include <event2/event.h>
 #include <event2/listener.h>
 #include <event2/bufferevent.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 #include <iostream>
+#include <map>
+#include <vector>
 #include <cstring>
 
 namespace Net
 {
+
     struct NetworkModule::Impl
     {
-        event_base *base;                     // libevent 事件循环
-        evconnlistener *listener;             // TCP 监听器
-        std::map<int, bufferevent *> clients; // 客户端连接表
-        OnDataCallback callback;              // 收到数据时的上层回调
+        event_base *base;                             // libevent 事件循环
+        evconnlistener *listener;                     // TCP 监听器
+        std::map<int, bufferevent *> clients;         // 客户端连接表
+        std::map<int, std::vector<char>> recvBuffers; // 每个客户端的缓存区
+        OnDataCallback callback;                      // 数据到达回调
     };
 
     // 输入缓冲区有数据可读
     static void read_back(bufferevent *bev, void *ctx)
     {
         NetworkModule::Impl *impl = static_cast<NetworkModule::Impl *>(ctx);
-        char buf[1024];
-        int n = bufferevent_read(bev, buf, sizeof(buf));
-        if (n > 0)
+        int fd = bufferevent_getfd(bev);
+        char buf[8192];
+
+        // 读数据并累积到对应 fd 的缓存里
+        while (true)
         {
-            int fd = bufferevent_getfd(bev);
-            if (impl->callback)
+            int n = bufferevent_read(bev, buf, sizeof(buf));
+            if (n <= 0)
+                break;
+            auto &buffer = impl->recvBuffers[fd];
+            buffer.insert(buffer.end(), buf, buf + n);
+
+            // 尝试拆包：先读协议头，确定整包长度，再循环处理完整包
+            while (buffer.size() >= sizeof(Protocol::ProtocolHeader))
             {
-                impl->callback(fd, buf, n);
+                Protocol::ProtocolHeader hdr;
+                std::memcpy(&hdr, buffer.data(), sizeof(hdr));
+                size_t packetLen = sizeof(hdr) + hdr.payloadLen;
+                if (buffer.size() < packetLen)
+                    break;
+
+                // 回调一个完整分片
+                if (impl->callback)
+                {
+                    impl->callback(fd, buffer.data(), packetLen);
+                }
+                // 移除已处理的数据
+                buffer.erase(buffer.begin(), buffer.begin() + packetLen);
             }
         }
-    }
-
-    // 输出缓冲区可写，或者输出缓冲区已经发送完
-    static void write_back(bufferevent *bev, void *ctx)
-    {
-        (void)bev;
-        (void)ctx;
     }
 
     // 连接关闭、出错或超时
@@ -45,7 +64,6 @@ namespace Net
     {
         NetworkModule::Impl *impl = static_cast<NetworkModule::Impl *>(ctx);
         int fd = bufferevent_getfd(bev);
-
         if (events & BEV_EVENT_ERROR)
         {
             std::cout << "[ERROR] Client disconnected: fd=" << fd << std::endl;
@@ -54,23 +72,22 @@ namespace Net
         {
             std::cout << "[ERROR] TIME OUT: fd=" << fd << std::endl;
         }
-
         bufferevent_free(bev);
         impl->clients.erase(fd);
+        impl->recvBuffers.erase(fd);
     }
 
+    // 新客户端连接回调
     static void listener_cb(evconnlistener *listener, evutil_socket_t fd,
                             sockaddr *addr, int socklen, void *ctx)
     {
         NetworkModule::Impl *impl = static_cast<NetworkModule::Impl *>(ctx);
         bufferevent *bev = bufferevent_socket_new(impl->base, fd, BEV_OPT_CLOSE_ON_FREE);
-        bufferevent_setcb(bev, read_back, write_back, event_back, impl);
+        bufferevent_setcb(bev, read_back, nullptr, event_back, impl);
         bufferevent_enable(bev, EV_READ | EV_WRITE);
-
         impl->clients[fd] = bev;
-
-        char ip[INET_ADDRSTRLEN];
-        sockaddr_in *sin = (sockaddr_in *)addr;
+        char ip[INET_ADDRSTRLEN] = {0};
+        sockaddr_in *sin = reinterpret_cast<sockaddr_in *>(addr);
         inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip));
         std::cout << "New client connected: fd=" << fd << ", ip=" << ip << std::endl;
     }
@@ -86,7 +103,6 @@ namespace Net
         delete impl_;
     }
 
-    // 初始化
     bool NetworkModule::init(int port, OnDataCallback cb)
     {
         impl_->callback = cb;
@@ -100,13 +116,12 @@ namespace Net
         sin.sin_addr.s_addr = INADDR_ANY;
 
         impl_->listener = evconnlistener_new_bind(
-            impl_->base, listener_cb, impl_, LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
-            -1, (sockaddr *)&sin, sizeof(sin));
-
+            impl_->base, listener_cb, impl_,
+            LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
+            -1, reinterpret_cast<sockaddr *>(&sin), sizeof(sin));
         return impl_->listener != nullptr;
     }
 
-    // 启动网络事件循环
     void NetworkModule::run()
     {
         if (impl_->base)
@@ -115,7 +130,6 @@ namespace Net
         }
     }
 
-    // 停止事件循环
     void NetworkModule::shutdown()
     {
         if (impl_->listener)
@@ -123,13 +137,12 @@ namespace Net
             evconnlistener_free(impl_->listener);
             impl_->listener = nullptr;
         }
-
         for (auto &[fd, bev] : impl_->clients)
         {
             bufferevent_free(bev);
         }
         impl_->clients.clear();
-
+        impl_->recvBuffers.clear();
         if (impl_->base)
         {
             event_base_free(impl_->base);
@@ -137,14 +150,11 @@ namespace Net
         }
     }
 
-    // 向指定客户端发送数据
     bool NetworkModule::sendData(int client_fd, const char *data, size_t len)
     {
         auto it = impl_->clients.find(client_fd);
         if (it == impl_->clients.end())
-        {
             return false;
-        }
         bufferevent_write(it->second, data, len);
         return true;
     }
@@ -154,4 +164,4 @@ namespace Net
         return impl_;
     }
 
-}
+} // namespace Net
